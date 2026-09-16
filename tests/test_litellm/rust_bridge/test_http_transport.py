@@ -75,13 +75,21 @@ async def test_non_streaming_request_preserves_tools_and_json_schema() -> None:
     client = http_transport.rust_async_client_if_enabled(httpx.Timeout(30.0), request_override=True)
     assert client is not None
     async with client:
-        response = await client.post("https://example.test/v1/chat/completions", json=body)
+        response = await client.post(
+            "https://example.test/v1/chat/completions",
+            headers={"connection": "keep-alive, x-remove", "x-keep": "yes", "x-remove": "no"},
+            json=body,
+        )
 
     assert response.headers["x-litellm-rust"] == "true"
     assert response.json()["choices"][0]["message"]["tool_calls"] == []
     request_body = _FakeConnection.calls[0]["body"]
     assert isinstance(request_body, bytes)
     assert json.loads(request_body) == body
+    request_headers = _FakeConnection.calls[0]["headers"]
+    assert isinstance(request_headers, dict)
+    assert request_headers["x-keep"] == "yes"
+    assert not {"connection", "content-length", "host", "x-remove"} & request_headers.keys()
 
 
 @pytest.mark.asyncio

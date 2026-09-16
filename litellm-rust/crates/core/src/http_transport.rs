@@ -89,8 +89,6 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(HTTP_TRANSPORT_CONNECT_TIMEOUT_SECS))
-            // Match httpx's default; opt-in HTTP/2 breaks some compatible gateways.
-            .http1_only()
             .build()
             .expect("valid HTTP client configuration")
     })

@@ -8,6 +8,21 @@ import httpx
 
 from litellm.rust_bridge.loader import get_native_bridge
 
+_TRANSPORT_HEADERS: Final = frozenset(
+    {
+        "connection",
+        "content-length",
+        "host",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
+
 
 class RustHttpResponse(Protocol):
     status_code: int
@@ -63,6 +78,13 @@ def _read_timeout(timeout: float | httpx.Timeout | None) -> float | None:
     return float(timeout)
 
 
+def _upstream_headers(headers: httpx.Headers) -> dict[str, str]:
+    excluded = set(_TRANSPORT_HEADERS)
+    for value in headers.get_list("connection"):
+        excluded.update(token.strip().lower() for token in value.split(","))
+    return {name: value for name, value in headers.multi_items() if name.lower() not in excluded}
+
+
 class _RustAsyncByteStream(httpx.AsyncByteStream):
     def __init__(self, response: RustHttpResponse) -> None:
         self._response: Final = response
@@ -87,7 +109,7 @@ class RustAsyncTransport(httpx.AsyncBaseTransport):
             response: Final = await connection_type.request(
                 method=request.method,
                 url=str(request.url),
-                headers=dict(request.headers.multi_items()),
+                headers=_upstream_headers(request.headers),
                 body=await request.aread(),
                 read_timeout_seconds=self._read_timeout,
             )
