@@ -2817,10 +2817,21 @@ class BaseLLMHTTPHandler:
                 "Creating HTTP client for responses API with shared_session: %s",
                 id(shared_session) if shared_session else None,
             )
-            async_httpx_client = get_async_httpx_client(
-                llm_provider=litellm.LlmProviders(custom_llm_provider),
-                params={"ssl_verify": litellm_params.get("ssl_verify", None)},
-                shared_session=shared_session,
+            from litellm.rust_bridge.http_transport import rust_async_client_if_enabled
+
+            request_override: Final = litellm_params.get("rust")
+            rust_client: Final = rust_async_client_if_enabled(
+                timeout,
+                request_override=request_override if isinstance(request_override, bool) else None,
+            )
+            async_httpx_client = (
+                AsyncHTTPHandler(timeout=timeout, client=rust_client)
+                if rust_client is not None
+                else get_async_httpx_client(
+                    llm_provider=litellm.LlmProviders(custom_llm_provider),
+                    params={"ssl_verify": litellm_params.get("ssl_verify", None)},
+                    shared_session=shared_session,
+                )
             )
         else:
             async_httpx_client = client

@@ -638,7 +638,14 @@ class BaseAzureLLM(BaseOpenAILLM):
         }
         # init http client + SSL Verification settings
         if is_async is True:
-            azure_client_params["http_client"] = self._get_async_http_client()
+            from litellm.rust_bridge.http_transport import rust_async_client_if_enabled
+
+            request_override: Final = litellm_params.get("rust")
+            rust_client: Final = rust_async_client_if_enabled(
+                timeout,
+                request_override=request_override if isinstance(request_override, bool) else None,
+            )
+            azure_client_params["http_client"] = rust_client or self._get_async_http_client()
         else:
             azure_client_params["http_client"] = self._get_sync_http_client()
 

@@ -7,12 +7,80 @@ mod marshal;
 mod routes;
 
 use litellm_ai_gateway::io::responses_ws::ResponsesWebSocketConnection as RustResponsesWebSocketConnection;
+use litellm_core::http_transport::{
+    HttpTransportRequest, HttpTransportResponse as RustHttpTransportResponse,
+    send as send_http_request,
+};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyBytes};
 use serde_json::Value;
 
 use crate::errors::core_error_to_pyerr;
 use crate::marshal::{marshal_headers, optional_timeout};
+
+#[pyclass]
+struct HttpResponseConnection {
+    inner: RustHttpTransportResponse,
+}
+
+#[pymethods]
+impl HttpResponseConnection {
+    #[classmethod]
+    #[pyo3(signature = (method, url, headers=None, body=Vec::new(), read_timeout_seconds=None))]
+    fn request<'py>(
+        _cls: &Bound<'py, pyo3::types::PyType>,
+        py: Python<'py>,
+        method: String,
+        url: String,
+        #[pyo3(from_py_with = litellm_python_interop::from_py)] headers: Option<Value>,
+        body: Vec<u8>,
+        read_timeout_seconds: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let request = HttpTransportRequest::from_parts(
+            &method,
+            &url,
+            marshal_headers(headers)?,
+            body,
+            optional_timeout(read_timeout_seconds),
+        )
+        .map_err(core_error_to_pyerr)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let inner = send_http_request(request)
+                .await
+                .map_err(core_error_to_pyerr)?;
+            Ok(HttpResponseConnection { inner })
+        })
+    }
+
+    #[getter]
+    fn status_code(&self) -> u16 {
+        self.inner.status
+    }
+
+    fn headers(&self, py: Python<'_>) -> Vec<(String, Py<PyBytes>)> {
+        self.inner
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), PyBytes::new(py, value).unbind()))
+            .collect()
+    }
+
+    fn next_chunk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let chunk = inner.next_chunk().await.map_err(core_error_to_pyerr)?;
+            Python::attach(|py| Ok(chunk.map(|bytes| PyBytes::new(py, &bytes).unbind())))
+        })
+    }
+
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            inner.close().await;
+            Ok(())
+        })
+    }
+}
 
 #[pyclass]
 struct ResponsesWebSocketConnection {
@@ -70,6 +138,7 @@ mod _native {
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
         super::errors::register(module)?;
         super::routes::register(module)?;
+        module.add_class::<super::HttpResponseConnection>()?;
         module.add_class::<super::ResponsesWebSocketConnection>()?;
         super::diagnostics::register(module)
     }
@@ -105,6 +174,7 @@ mod tests {
                 "chat_completions_decline",
                 "chat_completions",
                 "achat_completions",
+                "HttpResponseConnection",
                 "ResponsesWebSocketConnection",
                 "gil_stats",
             ];

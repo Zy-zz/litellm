@@ -382,6 +382,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
         organization: str | None = None,
         client: OpenAI | AsyncOpenAI | None = None,
         shared_session: Optional["ClientSession"] = None,
+        use_rust: bool = False,
     ) -> OpenAI | AsyncOpenAI | None:
         workload_identity_config: Final = resolve_openai_workload_identity_config(api_key=api_key, api_base=api_base)
         client_initialization_params: Final[dict] = locals()
@@ -400,7 +401,12 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                 if isinstance(cached_client, OpenAI) or isinstance(cached_client, AsyncOpenAI):
                     return cached_client
             if is_async:
-                async_http_client: Final = OpenAIChatCompletion._get_async_http_client(shared_session=shared_session)
+                from litellm.rust_bridge.http_transport import rust_async_client_if_enabled
+
+                async_http_client: Final = rust_async_client_if_enabled(
+                    timeout,
+                    request_override=use_rust,
+                ) or OpenAIChatCompletion._get_async_http_client(shared_session=shared_session)
                 http_client: httpx.Client | httpx.AsyncClient | None = async_http_client
                 _new_client: OpenAI | AsyncOpenAI = (
                     AsyncOpenAI(
@@ -927,6 +933,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                     organization=organization,
                     client=client,
                     shared_session=shared_session,
+                    use_rust=self._rust_transport_enabled(litellm_params),
                 )
 
                 ## LOGGING
@@ -1107,6 +1114,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                     organization=organization,
                     client=client,
                     shared_session=shared_session,
+                    use_rust=self._rust_transport_enabled(litellm_params),
                 )
                 ## LOGGING
                 logging_obj.pre_call(
@@ -1193,6 +1201,13 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
         if api_base is None or is_openai_backed_api_base(api_base):
             return {"stream_options": {"include_usage": True}}
         return {}
+
+    @staticmethod
+    def _rust_transport_enabled(litellm_params: dict) -> bool:
+        from litellm.rust_bridge.configuration import rust_enabled
+
+        request_override: Final = litellm_params.get("rust")
+        return rust_enabled(request_override=request_override if isinstance(request_override, bool) else None)
 
     # Embedding
     @track_llm_api_timing()
